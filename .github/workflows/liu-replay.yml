@@ -1,0 +1,116 @@
+name: Liu FULL_RETAINED_VERIFY external replay
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/liu-replay.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  replay:
+    runs-on: windows-2022
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up CPython 3.12.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12.10"
+          architecture: "x64"
+
+      - name: Record runtime
+        shell: pwsh
+        run: |
+          python --version
+          python -c "import sys,platform; print(sys.executable); print(platform.platform()); print(sys.flags)"
+
+      - name: Download frozen Liu release asset
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $url = "https://github.com/luciferyu666/certified-weil-positivity/releases/download/v1.0-mcom-submission/w200-frozen-artifact.zip"
+          curl.exe -L --fail --retry 3 --retry-delay 5 -o w200-frozen-artifact.zip $url
+
+          $size = (Get-Item w200-frozen-artifact.zip).Length
+          Write-Host "size=$size"
+          if ($size -ne 634659625) {
+            throw "SIZE MISMATCH: expected 634659625, got $size"
+          }
+
+          $sha = (Get-FileHash w200-frozen-artifact.zip -Algorithm SHA256).Hash.ToLower()
+          Write-Host "sha256=$sha"
+          if ($sha -ne "7f8e47d265326cbfa4da95197c98bc226fe6cbfd8a22e6896955c18d8cdb376d") {
+            throw "SHA256 MISMATCH"
+          }
+
+      - name: Extract frozen artifact
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force extracted | Out-Null
+          Expand-Archive -LiteralPath w200-frozen-artifact.zip -DestinationPath extracted -Force
+          $repro = Get-ChildItem -Path extracted -Directory -Recurse |
+            Where-Object { $_.Name -eq "reproduction-a" } |
+            Select-Object -First 1
+          if (-not $repro) { throw "reproduction-a directory not found" }
+          Write-Host "reproduction-a=$($repro.FullName)"
+          "REPRO_DIR=$($repro.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: FULL_RETAINED_VERIFY
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Continue"
+          Set-Location $env:REPRO_DIR
+          python -I -S -B run.py FULL_RETAINED_VERIFY --output external-a 2>&1 |
+            Tee-Object -FilePath full-retained.log
+          $code = $LASTEXITCODE
+          Write-Host "FULL_RETAINED_VERIFY exit_code=$code"
+          if ($code -ne 0) { exit $code }
+
+      - name: Independent scalar certificate
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Continue"
+          Set-Location $env:REPRO_DIR
+          python -I -S -B scalar_a.py --output external-a-scalars.json 2>&1 |
+            Tee-Object -FilePath scalar-a.log
+          $code = $LASTEXITCODE
+          Write-Host "scalar_a exit_code=$code"
+          if ($code -ne 0) { exit $code }
+
+      - name: Finalize Theorem A reproduction
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Continue"
+          Set-Location $env:REPRO_DIR
+          python -I -S -B finalize_a.py --run external-a --scalar external-a-scalars.json --output external-a-result.json 2>&1 |
+            Tee-Object -FilePath finalize-a.log
+          $code = $LASTEXITCODE
+          Write-Host "finalize_a exit_code=$code"
+          if (Test-Path external-a-result.json) {
+            Write-Host "----- external-a-result.json -----"
+            Get-Content external-a-result.json
+          }
+          if ($code -ne 0) { exit $code }
+
+      - name: Upload replay receipts and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: liu-full-retained-replay-receipts
+          if-no-files-found: warn
+          retention-days: 30
+          path: |
+            ${{ env.REPRO_DIR }}/full-retained.log
+            ${{ env.REPRO_DIR }}/scalar-a.log
+            ${{ env.REPRO_DIR }}/finalize-a.log
+            ${{ env.REPRO_DIR }}/external-a/**
+            ${{ env.REPRO_DIR }}/external-a-scalars.json
+            ${{ env.REPRO_DIR }}/external-a-result.json
