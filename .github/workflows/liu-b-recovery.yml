@@ -1,0 +1,75 @@
+name: Liu Theorem B clean reconstruction
+
+on:
+  push:
+    branches: [codex/liu-b-recovery-20260928]
+    paths:
+      - ".github/workflows/liu-b-recovery.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  theorem-b:
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - name: Checkout replay workflow
+        uses: actions/checkout@v4
+
+      - name: Set up supported CPython
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12.10"
+          architecture: "x64"
+
+      - name: Record runtime and download frozen source
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          python --version
+          python -c "import sys,platform; print(sys.executable); print(platform.platform()); print(sys.flags)"
+          curl.exe -L --fail --retry 3 --retry-delay 5 -o w200-frozen-artifact.zip "https://github.com/luciferyu666/certified-weil-positivity/releases/download/v1.0-mcom-submission/w200-frozen-artifact.zip"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $size = (Get-Item w200-frozen-artifact.zip).Length
+          $sha = (Get-FileHash w200-frozen-artifact.zip -Algorithm SHA256).Hash.ToLower()
+          Write-Host "archive_bytes=$size archive_sha256=$sha"
+          if ($size -ne 634659625) { throw "Archive size mismatch" }
+          if ($sha -ne "7f8e47d265326cbfa4da95197c98bc226fe6cbfd8a22e6896955c18d8cdb376d") { throw "Archive SHA256 mismatch" }
+          Expand-Archive -LiteralPath w200-frozen-artifact.zip -DestinationPath extracted
+          $repro = Join-Path $env:GITHUB_WORKSPACE "extracted/w200-pub-2026-09-14/reproduction"
+          if (-not (Test-Path (Join-Path $repro "reproduce.py"))) { throw "Frozen entry point missing" }
+          "REPRO_DIR=$repro" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: FULL_REBUILD Theorem B
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Continue"
+          Set-Location $env:REPRO_DIR
+          python -I -S -B reproduce.py FULL_REBUILD --output external-b --jobs 2 2>&1 | Tee-Object -FilePath external-b-full.log
+          $code = $LASTEXITCODE
+          if (Test-Path external-b/theorem-b-result.json) { Get-Content external-b/theorem-b-result.json }
+          if ($code -ne 0) { exit $code }
+
+      - name: FAST_VERIFY complete regenerated certificate
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Continue"
+          Set-Location $env:REPRO_DIR
+          python -I -S -B reproduce.py FAST_VERIFY --output external-b --jobs 2 2>&1 | Tee-Object -FilePath external-b-fast.log
+          $code = $LASTEXITCODE
+          if (Test-Path external-b/fast-theorem-b-result.json) { Get-Content external-b/fast-theorem-b-result.json }
+          if ($code -ne 0) { exit $code }
+
+      - name: Preserve fresh certificate and failure evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: liu-theorem-b-recovery-20260928
+          if-no-files-found: warn
+          retention-days: 30
+          path: |
+            ${{ env.REPRO_DIR }}/external-b/**
+            ${{ env.REPRO_DIR }}/external-b-full.log
+            ${{ env.REPRO_DIR }}/external-b-fast.log
