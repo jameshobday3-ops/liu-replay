@@ -1,0 +1,24 @@
+name: Validate Window15 Second Payload
+on:
+  push:
+    branches: [rh-window15-enrichment-audit]
+    paths: ['.github/workflows/validate-window15-second-payload.yml']
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Decode and inspect second scripts
+        run: |
+          set -euo pipefail
+          mkdir out
+          base64 -d rh-window15-audit/second_scripts.b64 | tar -xz -C out
+          find out -maxdepth 1 -type f -printf '%f\n' | sort
+          test -f out/make_second_proposals.py
+          test -f out/build_second_moments.py
+          test -f out/verify_second_moments.py
+          test -f out/certify_enriched2.py
+          python -m py_compile out/*.py
+          echo PASS_SECOND_PAYLOAD
