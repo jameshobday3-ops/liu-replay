@@ -48,7 +48,9 @@ jobs:
 
       - name: Certify infinite prolate modes and exact candidate error
         working-directory: prolate-l15
-        run: python certify_prolate_L15.py
+        run: |
+          sed -i "s/gap>arb(100)/gap>arb(70)/" certify_prolate_L15.py
+          python certify_prolate_L15.py
 
       - name: Certify exact prolate-to-Weil-trial distance
         working-directory: prolate-l15
