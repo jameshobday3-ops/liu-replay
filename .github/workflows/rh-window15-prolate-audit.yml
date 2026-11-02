@@ -40,7 +40,7 @@ jobs:
           mkdir -p prolate-l15
           base64 -d rh-window15-prolate/scripts.b64 | tar -xz -C prolate-l15
           sed -i "s#Path('/mnt/data/prolate_l15_cert/prolate_candidate_L15.json')#Path('prolate_candidate_L15.json')#" prolate-l15/build_prolate_L15.py
-          cp rh-window15-audit/spectral/even_trial.json prolate-l15/even_trial.json
+          base64 -d rh-window15-prolate/even_trial.json.gz.b64 | gzip -dc > prolate-l15/even_trial.json
 
       - name: Freeze high-precision prolate proposal
         working-directory: prolate-l15
