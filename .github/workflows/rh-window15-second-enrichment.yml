@@ -13,7 +13,7 @@ permissions:
 
 concurrency:
   group: rh-window15-two-residual-audit
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   certified-audit:
