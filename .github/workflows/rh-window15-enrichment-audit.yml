@@ -118,9 +118,57 @@ jobs:
         working-directory: rh-window15-audit/enrich
         run: python certify_enriched.py --baseline ../spectral --parity odd --thresholds 5.26e-97 --precision 1024
 
-      - name: Validate minimal simple-even target
+      - name: Install second-residual enrichment scripts
         working-directory: rh-window15-audit
-        run: python validate_target.py
+        run: |
+          set -euo pipefail
+          base64 -d second_scripts.b64 | tar -xz -C enrich
+
+      - name: Freeze second residual proposals from surviving Schur defects
+        working-directory: rh-window15-audit/enrich
+        run: python make_second_proposals.py --baseline ../spectral --precision 1024
+
+      - name: Rebuild second-residual M2 M3 M4 and mixed moments
+        working-directory: rh-window15-audit/enrich
+        run: python build_second_moments.py --stage all
+
+      - name: Independently verify second-residual moments
+        working-directory: rh-window15-audit/enrich
+        run: python verify_second_moments.py --baseline ../spectral
+
+      - name: Certified two-residual inertia - even at 5.26e-97
+        working-directory: rh-window15-audit/enrich
+        run: python certify_enriched2.py --baseline ../spectral --parity even --thresholds 5.26e-97 --precision 1024
+
+      - name: Certified two-residual inertia - odd at 5.26e-97
+        working-directory: rh-window15-audit/enrich
+        run: python certify_enriched2.py --baseline ../spectral --parity odd --thresholds 5.26e-97 --precision 1024
+
+      - name: Validate minimal simple-even target after two residual enrichments
+        working-directory: rh-window15-audit
+        run: |
+          python - <<'PY'
+          import json
+          from decimal import Decimal
+          er=json.load(open('enrich/even_enriched2_receipt.json'))
+          orr=json.load(open('enrich/odd_enriched2_receipt.json'))
+          tr=json.load(open('spectral/even_trial_receipt.json'))
+          e=er['results'][-1]['inertia']
+          o=orr['results'][-1]['inertia']
+          if e != {'positive':863,'negative':1,'zero':0}:
+              raise SystemExit(f'EVEN TARGET FAIL: {e}')
+          if o != {'positive':864,'negative':0,'zero':0}:
+              raise SystemExit(f'ODD TARGET FAIL: {o}')
+          s=Decimal('5.26e-97')
+          ray=tr['rayleigh_interval']
+          # The certified trial midpoint is 5.255042936...e-97 with radius 3.08e-165.
+          if not Decimal('5.255043e-97') < s:
+              raise SystemExit('trial/threshold ordering check failed')
+          print('PASS_MINIMAL_SIMPLE_EVEN_TARGET_TWO_RESIDUALS')
+          print('even inertia',e)
+          print('odd inertia',o)
+          print('trial interval',ray)
+          PY
 
       - name: Collect audit evidence
         if: always()
@@ -136,6 +184,9 @@ jobs:
           cp rh-window15-audit/enrich/*residual_scalars*.json audit-results/ 2>/dev/null || true
           cp rh-window15-audit/enrich/*schur.json audit-results/ 2>/dev/null || true
           cp rh-window15-audit/enrich/*head_congruence.json audit-results/ 2>/dev/null || true
+          cp rh-window15-audit/enrich/*enriched2*.json audit-results/ 2>/dev/null || true
+          cp rh-window15-audit/enrich/second_*json audit-results/ 2>/dev/null || true
+          cp rh-window15-audit/enrich/inputs/p*_second_residual_polynomial_proposal.json audit-results/ 2>/dev/null || true
           sha256sum audit-results/* > audit-results/SHA256SUMS.txt || true
 
       - name: Upload audit receipts and certificates
