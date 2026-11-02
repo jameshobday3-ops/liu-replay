@@ -1,164 +1,145 @@
-name: RH Window 1.5 residual-enrichment audit
+name: RH Window15 Residual-Enrichment Audit
 
 on:
   push:
-    branches: [rh-window15-enrichment-audit]
+    branches:
+      - rh-window15-enrichment-audit
     paths:
       - 'rh-window15-audit/**'
       - '.github/workflows/rh-window15-enrichment-audit.yml'
-  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
-  certify:
+  certified-audit:
     runs-on: ubuntu-24.04
-    timeout-minutes: 240
+    timeout-minutes: 360
     env:
-      OPENBLAS_NUM_THREADS: '2'
-      OMP_NUM_THREADS: '2'
-      MKL_NUM_THREADS: '2'
+      PYTHONHASHSEED: "0"
+      OPENBLAS_NUM_THREADS: "2"
+      OMP_NUM_THREADS: "2"
+      MKL_NUM_THREADS: "2"
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout audit branch
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.12.14'
-
-      - name: Decode frozen audit code
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p work
-          cat rh-window15-audit/payload.00 rh-window15-audit/payload.01 rh-window15-audit/payload.02 | base64 -d > /tmp/rh_payload.tar.gz
-          echo "ce8eca0ed11eaf3a64dc3d0edb7e0787d1653464bff94c7953d517bf2e608370  /tmp/rh_payload.tar.gz" | sha256sum -c -
-          tar -xzf /tmp/rh_payload.tar.gz -C work
+          python-version: "3.12"
 
       - name: Install pinned arithmetic stack
         run: |
+          set -euo pipefail
           python -m pip install --upgrade pip
-          python -m pip install -r work/baseline/requirements.txt
+          python -m pip install python-flint==0.8.0 mpmath==1.3.0 numpy==2.3.5 scipy==1.17.0
+
+      - name: Record arithmetic provenance
+        run: |
           python - <<'PY'
-          import sys, flint, numpy, scipy, mpmath
-          print("python", sys.version)
-          print("python-flint", flint.__version__)
-          print("numpy", numpy.__version__)
-          print("scipy", scipy.__version__)
-          print("mpmath", mpmath.__version__)
-          print("flint ctx", flint.ctx)
+          import json, platform, sys
+          import flint, numpy, scipy, mpmath
+          info = {
+              "python": sys.version,
+              "platform": platform.platform(),
+              "python_flint": getattr(flint, "__version__", "unknown"),
+              "flint_ctx": str(getattr(flint, "ctx", "unavailable")),
+              "numpy": numpy.__version__,
+              "scipy": scipy.__version__,
+              "mpmath": mpmath.__version__,
+          }
+          print(json.dumps(info, indent=2))
+          open("rh-window15-audit/environment.json","w").write(json.dumps(info,indent=2)+"\n")
           PY
 
-      - name: Rebuild continuum source certificate
-        working-directory: work/baseline
+      - name: Rebuild adaptive continuum source
+        working-directory: rh-window15-audit/spectral
         run: |
           set -euo pipefail
           python adaptive_source.py --L 3/2 --cells 16384 --iterations 600
           mkdir -p inputs
           cp source_weights_L3_2.json inputs/source_weights_L3_2.json
-          python budget.py
 
-      - name: Rebuild 3360 archimedean moments
-        working-directory: work/baseline
-        run: |
-          set -euo pipefail
-          python build_moments.py
+      - name: Rebuild 3360 integrated moments
+        working-directory: rh-window15-audit/spectral
+        run: python build_moments.py
+
+      - name: Certify source and compact-kernel budgets
+        working-directory: rh-window15-audit/spectral
+        run: python budget.py
 
       - name: Rebuild all six 864x864 source matrices
-        working-directory: work/baseline
-        run: |
-          set -euo pipefail
-          python build_sources.py
+        working-directory: rh-window15-audit/spectral
+        run: python build_sources.py
 
-      - name: Rebuild zero-shift comparison and residual proposals
-        working-directory: work/baseline
-        run: |
-          set -euo pipefail
-          python certify_spectrum.py --parity even --thresholds 0 --precision 1024 | tee even_zero.log
-          python certify_spectrum.py --parity odd  --thresholds 0 --precision 1024 | tee odd_zero.log
+      - name: Independent low-degree source cross-check
+        working-directory: rh-window15-audit/spectral
+        run: python check_low_sources.py
 
-      - name: Certify fresh 192-mode even physical trial
-        working-directory: work/baseline
-        run: |
-          set -euo pipefail
-          python physical_even_trial.py --L 3/2 --modes 192 --nq 768 --precision 1536 | tee even_trial_fresh.log
-          python - <<'PY'
-          import json
-          from flint import arb
-          r=json.load(open("even_trial_receipt.json"))
-          target=arb("5.26e-97")
-          value=arb(r["rayleigh_interval"])
-          if not value < target:
-              raise SystemExit(f"FAIL physical trial {value} not below {target}")
-          print("PASS_PHYSICAL_TRIAL_BELOW_5.26e-97", value)
-          PY
+      - name: Rebuild and certify physical even trial
+        working-directory: rh-window15-audit/spectral
+        run: python physical_even_trial.py --L 3/2 --modes 192 --nq 768 --precision 1536
 
-      - name: Build target-adapted residual proposals at 1e-95
-        run: |
-          set -euo pipefail
-          python rh-window15-audit/make_target_proposals.py --baseline work/baseline --out work/enrichment/inputs --precision 1024
+      - name: Generate zero-shift residual proposal - even
+        working-directory: rh-window15-audit/spectral
+        run: python certify_spectrum.py --parity even --thresholds 0 --precision 1024
 
-      - name: Rebuild targeted M2 M3 M4 data
-        working-directory: work/enrichment
-        run: |
-          set -euo pipefail
-          python build_targeted_moments.py --stage all | tee targeted_moments.log
-          python verify_moments.py --baseline ../baseline | tee moment_validation.log
+      - name: Generate zero-shift residual proposal - odd
+        working-directory: rh-window15-audit/spectral
+        run: python certify_spectrum.py --parity odd --thresholds 0 --precision 1024
 
-      - name: Run enriched even comparison at minimal target
-        working-directory: work/enrichment
+      - name: Prepare enrichment inputs
         run: |
           set -euo pipefail
-          python certify_enriched.py --baseline ../baseline --parity even --thresholds 1e-95 --precision 1024 | tee even_enriched.log
+          mkdir -p rh-window15-audit/enrich/inputs
+          cp rh-window15-audit/spectral/certify_spectrum.py rh-window15-audit/enrich/inputs/baseline_spectrum.py
+          cp rh-window15-audit/spectral/p0_s0_residual_polynomial_proposal.json rh-window15-audit/enrich/inputs/
+          cp rh-window15-audit/spectral/p1_s0_residual_polynomial_proposal.json rh-window15-audit/enrich/inputs/
 
-      - name: Run enriched odd comparison at minimal target
-        working-directory: work/enrichment
-        run: |
-          set -euo pipefail
-          python certify_enriched.py --baseline ../baseline --parity odd --thresholds 1e-95 --precision 1024 | tee odd_enriched.log
+      - name: Rebuild targeted M2 M3 M4 enrichment data
+        working-directory: rh-window15-audit/enrich
+        run: python build_targeted_moments.py --stage all
 
-      - name: Decide the L=1.5 simple-even target
-        run: |
-          set -euo pipefail
-          python - <<'PY'
-          import json
-          from pathlib import Path
-          from flint import arb
-          root=Path("work")
-          trial=json.loads((root/"baseline/even_trial_receipt.json").read_text())
-          q=arb(trial["rayleigh_interval"])
-          s=arb("5.26e-97")
-          if not q < s:
-              raise SystemExit(f"FAIL: trial {q} is not below s={s}")
-          print("PASS trial", q, "<", s)
-          expected={"even":1,"odd":0}
-          for parity,neg in expected.items():
-              rec=json.loads((root/f"enrichment/{parity}_enriched_receipt.json").read_text())
-              rows=[x for x in rec["results"] if x.get("s_label")=="1e-95"]
-              if len(rows)!=1:
-                  raise SystemExit(f"FAIL {parity}: 1e-95 receipt missing/duplicated")
-              inertia=rows[0]["inertia"]
-              want={"positive":864-neg,"negative":neg,"zero":0}
-              if inertia != want:
-                  raise SystemExit(f"FAIL {parity} at 1e-95: got {inertia}, want {want}")
-              print("PASS_1E-95", parity, inertia)
-          print("PASS_WINDOW15_SIMPLE_ISOLATED_EVEN_GROUND_STATE_AT_1E-95")
-          PY
+      - name: Independently verify targeted moments
+        working-directory: rh-window15-audit/enrich
+        run: python verify_moments.py --baseline ../spectral
+
+      - name: Certified enriched inertia - even at 5.26e-97
+        working-directory: rh-window15-audit/enrich
+        run: python certify_enriched.py --baseline ../spectral --parity even --thresholds 5.26e-97 --precision 1024
+
+      - name: Certified enriched inertia - odd at 5.26e-97
+        working-directory: rh-window15-audit/enrich
+        run: python certify_enriched.py --baseline ../spectral --parity odd --thresholds 5.26e-97 --precision 1024
+
+      - name: Validate minimal simple-even target
+        working-directory: rh-window15-audit
+        run: python validate_target.py
 
       - name: Collect audit evidence
         if: always()
         shell: bash
         run: |
           mkdir -p audit-results
-          cp work/baseline/*receipt.json audit-results/ 2>/dev/null || true
-          cp work/baseline/*.log audit-results/ 2>/dev/null || true
-          cp work/enrichment/*receipt.json audit-results/ 2>/dev/null || true
-          cp work/enrichment/*validation*.json audit-results/ 2>/dev/null || true
-          cp work/enrichment/*.log audit-results/ 2>/dev/null || true
-          cp work/enrichment/*residual_scalars.json audit-results/ 2>/dev/null || true
-          cp work/enrichment/*schur.json audit-results/ 2>/dev/null || true
+          cp rh-window15-audit/environment.json audit-results/ 2>/dev/null || true
+          cp rh-window15-audit/spectral/*receipt*.json audit-results/ 2>/dev/null || true
+          cp rh-window15-audit/spectral/*crosscheck*.json audit-results/ 2>/dev/null || true
+          cp rh-window15-audit/spectral/even_trial.json audit-results/ 2>/dev/null || true
+          cp rh-window15-audit/enrich/*receipt*.json audit-results/ 2>/dev/null || true
+          cp rh-window15-audit/enrich/*validation*.json audit-results/ 2>/dev/null || true
+          cp rh-window15-audit/enrich/*residual_scalars*.json audit-results/ 2>/dev/null || true
+          cp rh-window15-audit/enrich/*schur.json audit-results/ 2>/dev/null || true
+          cp rh-window15-audit/enrich/*head_congruence.json audit-results/ 2>/dev/null || true
           sha256sum audit-results/* > audit-results/SHA256SUMS.txt || true
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload audit receipts and certificates
         if: always()
+        uses: actions/upload-artifact@v4
         with:
-          name: rh-window15-enrichment-audit-results
-          path: audit-results/
+          name: window15-enrichment-audit
+          if-no-files-found: warn
           retention-days: 30
+          compression-level: 6
+          path: audit-results/
