@@ -107,13 +107,13 @@ jobs:
         working-directory: work/enrichment
         run: |
           set -euo pipefail
-          python certify_enriched.py --baseline ../baseline --parity even --thresholds 5.26e-97 --precision 1024 | tee even_enriched.log
+          python certify_enriched.py --baseline ../baseline --parity even --thresholds 5.26e-97,1e-95 --precision 1024 | tee even_enriched.log
 
       - name: Run enriched odd comparison at minimal target
         working-directory: work/enrichment
         run: |
           set -euo pipefail
-          python certify_enriched.py --baseline ../baseline --parity odd --thresholds 5.26e-97 --precision 1024 | tee odd_enriched.log
+          python certify_enriched.py --baseline ../baseline --parity odd --thresholds 5.26e-97,1e-95 --precision 1024 | tee odd_enriched.log
 
       - name: Decide the L=1.5 simple-even target
         run: |
@@ -132,15 +132,15 @@ jobs:
           expected={"even":1,"odd":0}
           for parity,neg in expected.items():
               rec=json.loads((root/f"enrichment/{parity}_enriched_receipt.json").read_text())
-              rows=[x for x in rec["results"] if x.get("s_label")=="5.26e-97"]
+              rows=[x for x in rec["results"] if x.get("s_label")=="1e-95"]
               if len(rows)!=1:
-                  raise SystemExit(f"FAIL {parity}: target receipt missing/duplicated")
+                  raise SystemExit(f"FAIL {parity}: 1e-95 receipt missing/duplicated")
               inertia=rows[0]["inertia"]
               want={"positive":864-neg,"negative":neg,"zero":0}
               if inertia != want:
-                  raise SystemExit(f"FAIL {parity}: got {inertia}, want {want}")
-              print("PASS", parity, inertia)
-          print("PASS_WINDOW15_SIMPLE_ISOLATED_EVEN_GROUND_STATE")
+                  raise SystemExit(f"FAIL {parity} at 1e-95: got {inertia}, want {want}")
+              print("PASS_1E-95", parity, inertia)
+          print("PASS_WINDOW15_SIMPLE_ISOLATED_EVEN_GROUND_STATE_AT_1E-95")
           PY
 
       - name: Collect audit evidence
