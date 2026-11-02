@@ -1,0 +1,166 @@
+name: RH Window 1.5 residual-enrichment audit
+
+on:
+  push:
+    branches: [rh-window15-enrichment-audit]
+    paths:
+      - 'rh-window15-audit/**'
+      - '.github/workflows/rh-window15-enrichment-audit.yml'
+  workflow_dispatch:
+
+jobs:
+  certify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    env:
+      OPENBLAS_NUM_THREADS: '2'
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12.14'
+          cache: 'pip'
+
+      - name: Decode frozen audit code
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p work
+          base64 -d rh-window15-audit/payload.b64 > /tmp/rh_payload.tar.gz
+          echo "ce8eca0ed11eaf3a64dc3d0edb7e0787d1653464bff94c7953d517bf2e608370  /tmp/rh_payload.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/rh_payload.tar.gz -C work
+
+      - name: Install pinned arithmetic stack
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r work/baseline/requirements.txt
+          python - <<'PY'
+          import sys, flint, numpy, scipy, mpmath
+          print("python", sys.version)
+          print("python-flint", flint.__version__)
+          print("numpy", numpy.__version__)
+          print("scipy", scipy.__version__)
+          print("mpmath", mpmath.__version__)
+          print("flint ctx", flint.ctx)
+          PY
+
+      - name: Rebuild continuum source certificate
+        working-directory: work/baseline
+        run: |
+          set -euo pipefail
+          python adaptive_source.py --L 3/2 --cells 16384 --iterations 600
+          mkdir -p inputs
+          cp source_weights_L3_2.json inputs/source_weights_L3_2.json
+          python budget.py
+
+      - name: Rebuild 3360 archimedean moments
+        working-directory: work/baseline
+        run: |
+          set -euo pipefail
+          python build_moments.py
+
+      - name: Rebuild all six 864x864 source matrices
+        working-directory: work/baseline
+        run: |
+          set -euo pipefail
+          python build_sources.py
+
+      - name: Rebuild zero-shift comparison and residual proposals
+        working-directory: work/baseline
+        run: |
+          set -euo pipefail
+          python certify_spectrum.py --parity even --thresholds 0 --precision 1024 | tee even_zero.log
+          python certify_spectrum.py --parity odd  --thresholds 0 --precision 1024 | tee odd_zero.log
+
+      - name: Certify fresh 192-mode even physical trial
+        working-directory: work/baseline
+        run: |
+          set -euo pipefail
+          python physical_even_trial.py --L 3/2 --modes 192 --nq 768 --precision 1536 | tee even_trial_fresh.log
+          python - <<'PY'
+          import json
+          from flint import arb
+          r=json.load(open("even_trial_receipt.json"))
+          target=arb("5.26e-97")
+          value=arb(r["rayleigh_interval"])
+          if not value < target:
+              raise SystemExit(f"FAIL physical trial {value} not below {target}")
+          print("PASS_PHYSICAL_TRIAL_BELOW_5.26e-97", value)
+          PY
+
+      - name: Freeze residual proposals into enrichment calculation
+        run: |
+          set -euo pipefail
+          cp work/baseline/p0_s0_residual_polynomial_proposal.json work/enrichment/inputs/
+          cp work/baseline/p1_s0_residual_polynomial_proposal.json work/enrichment/inputs/
+
+      - name: Rebuild targeted M2 M3 M4 data
+        working-directory: work/enrichment
+        run: |
+          set -euo pipefail
+          python build_targeted_moments.py --stage all | tee targeted_moments.log
+          python verify_moments.py --baseline ../baseline | tee moment_validation.log
+
+      - name: Run enriched even comparison at minimal target
+        working-directory: work/enrichment
+        run: |
+          set -euo pipefail
+          python certify_enriched.py --baseline ../baseline --parity even --thresholds 5.26e-97 --precision 1024 | tee even_enriched.log
+
+      - name: Run enriched odd comparison at minimal target
+        working-directory: work/enrichment
+        run: |
+          set -euo pipefail
+          python certify_enriched.py --baseline ../baseline --parity odd --thresholds 5.26e-97 --precision 1024 | tee odd_enriched.log
+
+      - name: Decide the L=1.5 simple-even target
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from flint import arb
+          root=Path("work")
+          trial=json.loads((root/"baseline/even_trial_receipt.json").read_text())
+          q=arb(trial["rayleigh_interval"])
+          s=arb("5.26e-97")
+          if not q < s:
+              raise SystemExit(f"FAIL: trial {q} is not below s={s}")
+          print("PASS trial", q, "<", s)
+          expected={"even":1,"odd":0}
+          for parity,neg in expected.items():
+              rec=json.loads((root/f"enrichment/{parity}_enriched_receipt.json").read_text())
+              rows=[x for x in rec["results"] if x.get("s_label")=="5.26e-97"]
+              if len(rows)!=1:
+                  raise SystemExit(f"FAIL {parity}: target receipt missing/duplicated")
+              inertia=rows[0]["inertia"]
+              want={"positive":864-neg,"negative":neg,"zero":0}
+              if inertia != want:
+                  raise SystemExit(f"FAIL {parity}: got {inertia}, want {want}")
+              print("PASS", parity, inertia)
+          print("PASS_WINDOW15_SIMPLE_ISOLATED_EVEN_GROUND_STATE")
+          PY
+
+      - name: Collect audit evidence
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p audit-results
+          cp work/baseline/*receipt.json audit-results/ 2>/dev/null || true
+          cp work/baseline/*.log audit-results/ 2>/dev/null || true
+          cp work/enrichment/*receipt.json audit-results/ 2>/dev/null || true
+          cp work/enrichment/*validation*.json audit-results/ 2>/dev/null || true
+          cp work/enrichment/*.log audit-results/ 2>/dev/null || true
+          cp work/enrichment/*residual_scalars.json audit-results/ 2>/dev/null || true
+          cp work/enrichment/*schur.json audit-results/ 2>/dev/null || true
+          sha256sum audit-results/* > audit-results/SHA256SUMS.txt || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: rh-window15-enrichment-audit-results
+          path: audit-results/
+          retention-days: 30
