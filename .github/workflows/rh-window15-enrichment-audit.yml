@@ -11,6 +11,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: rh-window15-enrichment-audit
+  cancel-in-progress: true
+
 jobs:
   certified-audit:
     runs-on: ubuntu-24.04
