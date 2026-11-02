@@ -156,6 +156,67 @@ le
 ]
 This proves the theorem.
 
+
+
+## 3A. Equivalent one-vector Schur-inertia certificate
+
+At any real trial threshold (U), write the block decomposition
+[
+A-U=
+egin{pmatrix}
+mu-U & b^*\
+b & C-U
+end{pmatrix}
+]
+relative to (mathbb Cvoplus Qmathcal H).
+
+If
+[
+C-U>0
+]
+and (mu<U), then the Schur complement of the positive block is
+[
+S(U)=mu-U-langle b,(C-U)^{-1}bangle<0.
+]
+The inertia-addition formula therefore gives
+[
+oxed{operatorname{inertia}(A-U)=(dim Qmathcal H, 1, 0)}
+]
+in finite dimension, and in the compact-resolvent operator setting it says
+that exactly one eigenvalue lies below (U).
+
+Thus the simple-even fixed-window goal can be certified by two quantities
+attached to a single explicit even candidate:
+[
+oxed{C-U>0,qquad mu<U.}
+]
+No separate positive lower bound on the ground eigenvalue is required.
+
+The associated scalar Feshbach function
+[
+F(z)=mu-z-langle b,(C-z)^{-1}bangle,qquad z<c,
+]
+satisfies
+[
+F'(z)=-1-langle b,(C-z)^{-2}bangle<0.
+]
+Hence the unique eigenvalue below (c) is also the unique root of (F) in
+that interval.
+
+Moreover,
+[
+0le mu-lambda_1
+le
+langle b,(C-U)^{-1}bangle,
+]
+so the same shorted resolvent supplies an optional lower bound
+[
+lambda_1ge
+mu-langle b,(C-U)^{-1}bangle.
+]
+This lower bound is not needed for the RH convergence route.
+
+
 ## 4. Practical certified inverse-solve corollary
 
 Suppose in addition that
@@ -225,6 +286,38 @@ Connes–van Suijlekom real-zero theorem implies that the Fourier transform of
 the simple even ground state has only real zeros. Local uniform convergence
 on every closed substrip then excludes nonreal zeros of (Xi) by Hurwitz
 (or local Rouché). Hence the stated growing-window hypotheses imply RH.
+
+
+
+## 5A. Minimal asymptotic rate actually required
+
+The convenient condition
+[
+eta_L=O(e^{-L/2})
+]
+is sufficient but can be weakened. The complex Fourier-evaluation norm has
+exponential rate
+[
+G_R(L)=e^{RL+o(L)}
+]
+for every fixed (0<R<1/2). Therefore it is enough that
+[
+oxed{
+limsup_{L	oinfty}rac1Llogeta_Lle-rac12
+}
+]
+along the chosen unbounded sequence. Equivalently, any bound of the form
+[
+eta_L=e^{-L/2+o(L)}
+]
+is sufficient, including polynomial or other subexponential losses multiplying
+(e^{-L/2}). For each fixed (R<1/2),
+[
+G_R(L)eta_L	o0.
+]
+This is the actual exponential-rate threshold of the present
+Cauchy--Schwarz/complex-strip transfer argument.
+
 
 ## 6. What now has to be proved
 
