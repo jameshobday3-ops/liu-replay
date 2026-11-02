@@ -1,0 +1,71 @@
+name: RH Window15 Prolate Distance Audit
+
+on:
+  push:
+    branches:
+      - rh-window15-prolate-audit
+    paths:
+      - 'rh-window15-prolate/**'
+      - '.github/workflows/rh-window15-prolate-audit.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rh-window15-prolate-audit
+  cancel-in-progress: true
+
+jobs:
+  prolate-audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install pinned arithmetic stack
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install python-flint==0.8.0 mpmath==1.3.0 numpy==2.3.5 scipy==1.17.0
+
+      - name: Install audit scripts and frozen trial
+        run: |
+          set -euo pipefail
+          mkdir -p prolate-l15
+          base64 -d rh-window15-prolate/scripts.b64 | tar -xz -C prolate-l15
+          sed -i "s#Path('/mnt/data/prolate_l15_cert/prolate_candidate_L15.json')#Path('prolate_candidate_L15.json')#" prolate-l15/build_prolate_L15.py
+          cp rh-window15-audit/spectral/even_trial.json prolate-l15/even_trial.json
+
+      - name: Freeze high-precision prolate proposal
+        working-directory: prolate-l15
+        run: python build_prolate_L15.py
+
+      - name: Certify infinite prolate modes and exact candidate error
+        working-directory: prolate-l15
+        run: python certify_prolate_L15.py
+
+      - name: Certify exact prolate-to-Weil-trial distance
+        working-directory: prolate-l15
+        run: python certify_overlap_L15.py
+
+      - name: Hash evidence
+        working-directory: prolate-l15
+        run: sha256sum prolate_candidate_L15.json prolate_certificate_L15.json prolate_trial_distance_L15.json even_trial.json > SHA256SUMS.txt
+
+      - name: Upload certificates
+        uses: actions/upload-artifact@v4
+        with:
+          name: window15-prolate-distance-audit
+          path: |
+            prolate-l15/prolate_candidate_L15.json
+            prolate-l15/prolate_certificate_L15.json
+            prolate-l15/prolate_trial_distance_L15.json
+            prolate-l15/even_trial.json
+            prolate-l15/SHA256SUMS.txt
+          retention-days: 30
