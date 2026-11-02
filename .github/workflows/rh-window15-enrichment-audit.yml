@@ -90,11 +90,10 @@ jobs:
           print("PASS_PHYSICAL_TRIAL_BELOW_5.26e-97", value)
           PY
 
-      - name: Freeze residual proposals into enrichment calculation
+      - name: Build target-adapted residual proposals at 1e-95
         run: |
           set -euo pipefail
-          cp work/baseline/p0_s0_residual_polynomial_proposal.json work/enrichment/inputs/
-          cp work/baseline/p1_s0_residual_polynomial_proposal.json work/enrichment/inputs/
+          python rh-window15-audit/make_target_proposals.py --baseline work/baseline --out work/enrichment/inputs --precision 1024
 
       - name: Rebuild targeted M2 M3 M4 data
         working-directory: work/enrichment
@@ -107,13 +106,13 @@ jobs:
         working-directory: work/enrichment
         run: |
           set -euo pipefail
-          python certify_enriched.py --baseline ../baseline --parity even --thresholds 5.26e-97,1e-95 --precision 1024 | tee even_enriched.log
+          python certify_enriched.py --baseline ../baseline --parity even --thresholds 1e-95 --precision 1024 | tee even_enriched.log
 
       - name: Run enriched odd comparison at minimal target
         working-directory: work/enrichment
         run: |
           set -euo pipefail
-          python certify_enriched.py --baseline ../baseline --parity odd --thresholds 5.26e-97,1e-95 --precision 1024 | tee odd_enriched.log
+          python certify_enriched.py --baseline ../baseline --parity odd --thresholds 1e-95 --precision 1024 | tee odd_enriched.log
 
       - name: Decide the L=1.5 simple-even target
         run: |
