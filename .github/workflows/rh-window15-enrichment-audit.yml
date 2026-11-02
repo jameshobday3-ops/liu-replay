@@ -28,7 +28,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p work
-          base64 -d rh-window15-audit/payload.b64 > /tmp/rh_payload.tar.gz
+          cat rh-window15-audit/payload.00 rh-window15-audit/payload.01 rh-window15-audit/payload.02 | base64 -d > /tmp/rh_payload.tar.gz
           echo "ce8eca0ed11eaf3a64dc3d0edb7e0787d1653464bff94c7953d517bf2e608370  /tmp/rh_payload.tar.gz" | sha256sum -c -
           tar -xzf /tmp/rh_payload.tar.gz -C work
 
