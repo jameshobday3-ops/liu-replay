@@ -1,0 +1,30 @@
+name: Export Window15 Enrichment Scripts
+
+on:
+  push:
+    branches:
+      - rh-window15-krylov
+    paths:
+      - '.github/workflows/export-window15-enrichment-scripts.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Decode second residual scripts
+        working-directory: rh-window15-audit
+        run: |
+          set -euo pipefail
+          mkdir -p decoded-second
+          base64 -d second_scripts.b64 | tar -xz -C decoded-second
+          find decoded-second -type f -maxdepth 3 -print
+      - name: Upload decoded scripts
+        uses: actions/upload-artifact@v4
+        with:
+          name: window15-decoded-enrichment-scripts
+          retention-days: 7
+          path: rh-window15-audit/decoded-second/
