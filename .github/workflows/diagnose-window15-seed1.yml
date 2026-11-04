@@ -1,0 +1,52 @@
+name: Diagnose Window15 Seed1 Provenance
+on:
+  push:
+    branches: [rh-window15-krylov]
+    paths: ['.github/workflows/diagnose-window15-seed1.yml']
+permissions:
+  contents: read
+  actions: read
+jobs:
+  seed:
+    strategy:
+      matrix:
+        parity: [even, odd]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: python -m pip install python-flint==0.8.0 mpmath==1.3.0 numpy==2.3.5 scipy==1.17.0
+      - uses: actions/download-artifact@v4
+        with:
+          name: window15-source-packet
+          path: sourcepkt
+          repository: ${{ github.repository }}
+          run-id: 41896525565
+          github-token: ${{ github.token }}
+      - name: Regenerate and hash seed
+        working-directory: sourcepkt/spectral
+        env:
+          PARITY: ${{ matrix.parity }}
+        run: |
+          set -euo pipefail
+          if [ "$PARITY" = even ]; then P=0; EXPECT=bf12d8762697998ea017c9256ec8e24ac2b75dcd5ecce2d1b73696ad86a329fc; else P=1; EXPECT=0595ebcfcc82c2a78c78d3141931bb7a89de638e3a0b0d63b34e7c62ad9774be; fi
+          python certify_spectrum.py --parity "$PARITY" --thresholds 0 --precision 1024
+          FILE="p${P}_s0_residual_polynomial_proposal.json"
+          GOT=$(sha256sum "$FILE" | awk '{print $1}')
+          echo "SEED_HASH parity=$PARITY got=$GOT expected=$EXPECT"
+          python - <<'PY'
+          import json,hashlib,os
+          p=0 if os.environ["PARITY"]=="even" else 1
+          f=f"p{p}_s0_residual_polynomial_proposal.json"
+          d=json.load(open(f))
+          coeff='\n'.join(d["raw_Legendre_coefficients"]).encode()
+          print("COEFF_HASH",hashlib.sha256(coeff).hexdigest())
+          print("BITS",d["bits"])
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: seed1-${{ matrix.parity }}
+          retention-days: 7
+          path: sourcepkt/spectral/p*_s0_residual_polynomial_proposal.json
