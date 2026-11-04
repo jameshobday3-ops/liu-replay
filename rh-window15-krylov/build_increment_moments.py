@@ -53,13 +53,14 @@ def save_mat(M,path,meta,bits=700):
     Path(path).write_text(json.dumps(meta|{'status':'PASS_C4_GRAM_INTERVALS','bits':bits,'dimension':M.nrows(),'max_width_units':maxw,'rows':rows},separators=(',',':'))+'\n')
 
 def legendre_polynomial(coeff,p):
-    x=arb_poly([0,1]);prev=arb_poly([1]);cur=x;f=arb_poly([])
-    for deg in range(DEG+1):
-        if deg==0:P=prev
-        elif deg==1:P=cur
-        else:
-            prev,cur=cur,((2*deg-1)*x*cur-(deg-1)*prev)*(arb(1)/deg);P=cur
-        if deg%2==p: f += P*coeff[deg//2]
+    # Match the 31 October operation order exactly.  This matters for a
+    # bit-for-bit Arb interval regression even when the enclosed real
+    # polynomial is mathematically identical.
+    x=arb_poly([0,1]);prev=arb_poly([1]);cur=x
+    f=(prev*coeff[0]) if p==0 else (cur*coeff[0])
+    for deg in range(2,DEG+1):
+        prev,cur=cur,((2*deg-1)*x*cur-(deg-1)*prev)*(arb(1)/deg)
+        if deg%2==p: f += cur*coeff[deg//2]
     expected=1726+p
     if f.degree()!=expected: raise ArithmeticError((f.degree(),expected))
     return f
