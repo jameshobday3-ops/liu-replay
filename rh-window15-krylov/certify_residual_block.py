@@ -14,6 +14,9 @@ fresh moment and inertia certificates.
 from pathlib import Path
 from fractions import Fraction
 import argparse,json,time,sys
+import numpy as np
+import scipy.linalg as sla
+import mpmath as mp
 from flint import arb,arb_mat,ctx
 
 
@@ -119,35 +122,40 @@ def main():
     print(json.dumps(receipt,indent=2),flush=True)
     target_neg = 1 if p==0 else 0
     if args.next_seed and result['inertia']['negative']>target_neg:
-        Ssaved=base.load_ball(Path(str(args.tag)+'_schur.json'))
-        hdata=json.loads(Path(str(args.tag)+'_head_congruence.json').read_text())
-        Vh=arb_mat([[arb(int(x))/(1<<hdata['bits']) for x in row] for row in hdata['coefficients']])
-        diag=Vh.transpose()*Ssaved*Vh
-        jj=next(i for i in range(64) if diag[i,i]<0)
-        head=base.sub(Vh,0,64,jj,jj+1)
-        Rtail=base.sub(T,64,n,64,n);crossT=base.sub(T,0,64,64,n)
-        lower=-Rtail.solve(crossT.transpose()*head)
-        bitsz=700;ints=[]
-        for i in range(n):
-            x=head[i,0] if i<64 else lower[i-64,0]
-            ints.append(int((x.mid()*(1<<bitsz)+arb(1)/2).floor().unique_fmpz()))
-        z=arb_mat([[arb(x)/(1<<bitsz)] for x in ints])
-        e=(z.transpose()*T*z)[0,0]
-        if not e<0: raise ArithmeticError('recovered comparison witness is not negative')
-        result['negative_witness_energy']=e.str(65)
-        Hzero=B-m*A;Y0=Hzero.solve(D)
-        anew=Y0*(J*z)/m
-        before=[]
-        for a in seeds:
-            den0=(a.transpose()*Gamma*a)[0,0];coef=(a.transpose()*Gamma*anew)[0,0]/den0
-            before.append(coef.str(25));anew=anew-a*coef
-        norm2=(anew.transpose()*Gamma*anew)[0,0]
-        if not norm2>0: raise ArithmeticError('proposal collapsed after Gamma orthogonalization')
-        anew=anew/norm2.sqrt()
-        maxabs=max(abs(anew[i,0].mid()) for i in range(n))
-        diag={'comparison_inertia':result['inertia'],'comparison_negative_witness_energy':result.get('negative_witness_energy'),
-              'gamma_projection_coefficients':before,'gamma_norm_after':'1','max_abs_coefficient':maxabs.str(20)}
-        save_seed([anew[i,0] for i in range(n)],args.next_seed,p,args.seed,diag)
-        print('NEXT_SEED',args.next_seed,diag,flush=True)
+        # Discovery only: use the high-precision midpoint Schur eigenvector and
+        # a float tail backsolve, then freeze the resulting direction dyadically.
+        # No sign claim depends on these floating calculations; the next rank is
+        # accepted only after fresh directed C3/C4 moments and Arb inertia.
+        sd=json.loads(Path(str(args.tag)+'_schur.json').read_text());mp.mp.dps=180
+        denmp=mp.mpf(2)**(sd['bits']+1);Sm=mp.matrix(sd['nrows'])
+        for i,row in enumerate(sd['rows']):
+            for j,(lo,hi) in enumerate(row):Sm[i,j]=(mp.mpf(lo)+mp.mpf(hi))/denmp
+        vals,Q=mp.eigsy(Sm);head=np.array([float(Q[i,0]) for i in range(64)],dtype=float)
+        def as_float(M): return np.array([[float(M[i,j].mid()) for j in range(M.ncols())] for i in range(M.nrows())])
+        Tf=as_float(T);Rtf=(Tf[64:,64:]+Tf[64:,64:].T)/2;crossf=Tf[:64,64:]
+        lower=-sla.cho_solve(sla.cho_factor(Rtf,lower=True,check_finite=True),crossf.T@head,check_finite=False)
+        z=np.concatenate([head,lower]);z/=np.linalg.norm(z)
+        Af=as_float(A);Bf=as_float(B);Jf=as_float(J);gamf=np.array([float(x) for x in gamma])
+        Gf=np.diag(gamf);Df=Af-0.5*Gf
+        Y0=sla.solve(Bf-0.5*Af,Df,assume_a='sym',check_finite=False)
+        anew=Y0@(Jf@z)/0.5
+        projections=[]
+        for aa in seeds:
+            av=np.array([float(aa[i,0]) for i in range(n)])
+            coef=float(np.sum(gamf*av*anew)/np.sum(gamf*av*av));projections.append(coef);anew-=coef*av
+        norm=float(np.sqrt(np.sum(gamf*anew*anew)))
+        if not (norm>0 and np.isfinite(norm)):raise ArithmeticError('proposal collapsed after Gamma orthogonalization')
+        anew/=norm;bits=700;ints=[int(round(float(x)*(2**bits))) for x in anew]
+        obj={'parity':p,'bits':bits,'raw_Legendre_coefficients':[str(x) for x in ints],
+             'status':'FROZEN_PROPOSAL_ONLY; acceptance requires fresh directed C3/C4 moments and full Arb inertia',
+             'source':'adaptive Gamma-orthogonalized lowest-Schur defect proposal in first block-Krylov residual space Q M E',
+             'parents':[str(x) for x in args.seed],
+             'diagnostics':{'current_inertia':result['inertia'],'lowest_schur_eigenvalue':mp.nstr(vals[0],50),
+                            'next_schur_eigenvalue':mp.nstr(vals[1],50) if len(vals)>1 else None,
+                            'gamma_projection_coefficients':projections,'gamma_norm_after':1.0,
+                            'max_abs_coefficient':float(np.max(np.abs(anew)))}
+             }
+        args.next_seed.write_text(json.dumps(obj,indent=2)+'\n')
+        print('NEXT_SEED',args.next_seed,obj['diagnostics'],flush=True)
 
 if __name__=='__main__': main()
