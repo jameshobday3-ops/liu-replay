@@ -57,6 +57,8 @@ def main():
     import certify_spectrum as base
     base.OUT=args.baseline
     A=base.load_source('A',p);B=base.load_source('B',p);K=base.load_source('K',p)
+    # Freeze the source directory as read-only input; all new certificates go here.
+    base.OUT=Path.cwd()
     gamma=[arb(3)/(4*i+2*p+1) for i in range(n)];Gamma=arb_mat(n,n)
     for i in range(n): Gamma[i,i]=gamma[i]
     seeds=[];seedmeta=[]
