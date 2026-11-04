@@ -121,6 +121,8 @@ def main():
     Path(args.tag+'_receipt.json').write_text(json.dumps(receipt,indent=2)+'\n')
     print(json.dumps(receipt,indent=2),flush=True)
     target_neg = 1 if p==0 else 0
+    if p==0 and result['inertia']['negative'] < 1:
+        raise ArithmeticError('even comparison has no negative direction despite certified physical trial below threshold')
     if args.next_seed and result['inertia']['negative']>target_neg:
         # Discovery only: use the high-precision midpoint Schur eigenvector and
         # a float tail backsolve, then freeze the resulting direction dyadically.
