@@ -1,0 +1,30 @@
+name: Export Window15 second-residual scripts
+
+on:
+  push:
+    branches:
+      - rh-window15-enrichment-audit
+    paths:
+      - '.github/workflows/export-window15-second-scripts.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract frozen scripts
+        working-directory: rh-window15-audit
+        run: |
+          set -euo pipefail
+          mkdir -p extracted-second
+          base64 -d second_scripts.b64 | tar -xz -C extracted-second
+          find extracted-second -type f -maxdepth 3 -print
+      - uses: actions/upload-artifact@v4
+        with:
+          name: window15-second-residual-scripts
+          retention-days: 30
+          path: rh-window15-audit/extracted-second/
