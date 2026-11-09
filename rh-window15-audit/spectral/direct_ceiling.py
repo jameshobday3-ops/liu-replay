@@ -40,7 +40,7 @@ def main():
         T=cs.symmetric(K + A - u*Gamma)
         tag=f"ceiling_p{p}_s{s_text.replace('-','m').replace('.','p')}"
         try:
-            result,_=cs.full_inertia(T,tag,want_witness=True)
+            result,_=cs.full_inertia(T,tag,want_witness=False)
             status="CERTIFIED_FULL_INERTIA"
         except Exception as exc:
             # A failure of the positive-tail factorization is itself informative,
