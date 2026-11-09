@@ -1,0 +1,75 @@
+name: RH Window15 Perfect-Inverse Ceiling
+
+on:
+  push:
+    branches:
+      - rh-window15-enrichment-audit
+    paths:
+      - '.github/workflows/rh-window15-perfect-inverse-ceiling.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rh-window15-perfect-inverse-ceiling
+  cancel-in-progress: true
+
+jobs:
+  ceiling:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      PYTHONHASHSEED: "0"
+      OPENBLAS_NUM_THREADS: "2"
+      OMP_NUM_THREADS: "2"
+      MKL_NUM_THREADS: "2"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install pinned arithmetic stack
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install python-flint==0.8.0 mpmath==1.3.0 numpy==2.3.5 scipy==1.17.0
+      - name: Rebuild adaptive source
+        working-directory: rh-window15-audit/spectral
+        run: |
+          set -euo pipefail
+          python adaptive_source.py --L 3/2 --cells 16384 --iterations 600
+          mkdir -p inputs
+          cp source_weights_L3_2.json inputs/source_weights_L3_2.json
+      - name: Rebuild integrated moments
+        working-directory: rh-window15-audit/spectral
+        run: python build_moments.py
+      - name: Certify source/kernel budgets
+        working-directory: rh-window15-audit/spectral
+        run: python budget.py
+      - name: Rebuild all six source matrices
+        working-directory: rh-window15-audit/spectral
+        run: python build_sources.py
+      - name: Cross-check low source entries
+        working-directory: rh-window15-audit/spectral
+        run: python check_low_sources.py
+      - name: Perfect-inverse ceiling even
+        working-directory: rh-window15-audit/spectral
+        run: python direct_ceiling.py --parity even --thresholds 0,5.26e-97 --precision 1024
+      - name: Perfect-inverse ceiling odd
+        working-directory: rh-window15-audit/spectral
+        run: python direct_ceiling.py --parity odd --thresholds 0,5.26e-97 --precision 1024
+      - name: Upload ceiling evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: window15-perfect-inverse-ceiling
+          retention-days: 30
+          path: |
+            rh-window15-audit/spectral/*perfect_inverse_ceiling.json
+            rh-window15-audit/spectral/ceiling_*_head_congruence.json
+            rh-window15-audit/spectral/ceiling_*_schur.json
+            rh-window15-audit/spectral/ceiling_*_negative_witness.json
+            rh-window15-audit/spectral/source_build_receipt.json
+            rh-window15-audit/spectral/budget_receipt.json
+            rh-window15-audit/spectral/low_source_crosscheck.json
