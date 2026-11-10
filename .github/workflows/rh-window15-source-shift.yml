@@ -1,0 +1,90 @@
+name: RH Window15 Source-Shift Test
+
+on:
+  push:
+    branches:
+      - rh-window15-enrichment-audit
+    paths:
+      - '.github/workflows/rh-window15-source-shift.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rh-window15-source-shift
+  cancel-in-progress: true
+
+jobs:
+  shift:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      PYTHONHASHSEED: "0"
+      OPENBLAS_NUM_THREADS: "2"
+      OMP_NUM_THREADS: "2"
+      MKL_NUM_THREADS: "2"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install pinned arithmetic stack
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install python-flint==0.8.0 mpmath==1.3.0 numpy==2.3.5 scipy==1.17.0
+      - name: Rebuild adaptive source
+        working-directory: rh-window15-audit/spectral
+        run: |
+          set -euo pipefail
+          python adaptive_source.py --L 3/2 --cells 16384 --iterations 600
+          mkdir -p inputs
+          cp source_weights_L3_2.json inputs/source_weights_L3_2.json
+      - name: Rebuild moments
+        working-directory: rh-window15-audit/spectral
+        run: python build_moments.py
+      - name: Rebuild budget
+        working-directory: rh-window15-audit/spectral
+        run: python budget.py
+      - name: Rebuild frozen 864-mode sources
+        working-directory: rh-window15-audit/spectral
+        run: python build_sources.py
+      - name: Cross-check low source entries
+        working-directory: rh-window15-audit/spectral
+        run: python check_low_sources.py
+      - name: Rebuild physical even trial
+        working-directory: rh-window15-audit/spectral
+        run: python physical_even_trial.py
+      - name: Certified source-shift comparison - even
+        working-directory: rh-window15-audit/spectral
+        run: python source_shift_test.py --parity even --precision 1024
+      - name: Certified source-shift comparison - odd
+        working-directory: rh-window15-audit/spectral
+        run: python source_shift_test.py --parity odd --precision 1024
+      - name: Evaluate target
+        working-directory: rh-window15-audit/spectral
+        run: |
+          python - <<'PY'
+          import json
+          e=json.load(open('even_source_shift_receipt.json'))['comparison_inertia']
+          o=json.load(open('odd_source_shift_receipt.json'))['comparison_inertia']
+          print('EVEN',e);print('ODD',o)
+          if e=={'positive':863,'negative':1,'zero':0} and o=={'positive':864,'negative':0,'zero':0}:
+              print('PASS_SOURCE_SHIFT_SIMPLE_EVEN_TARGET')
+          else:
+              print('SOURCE_SHIFT_DID_NOT_CLOSE')
+          PY
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: window15-source-shift
+          retention-days: 30
+          path: |
+            rh-window15-audit/spectral/*source_shift_receipt.json
+            rh-window15-audit/spectral/sourceshift_*_head_congruence.json
+            rh-window15-audit/spectral/sourceshift_*_schur.json
+            rh-window15-audit/spectral/even_trial_receipt.json
+            rh-window15-audit/spectral/source_build_receipt.json
+            rh-window15-audit/spectral/budget_receipt.json
