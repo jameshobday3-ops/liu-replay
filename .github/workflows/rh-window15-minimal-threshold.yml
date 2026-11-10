@@ -5,8 +5,7 @@ on:
     branches:
       - rh-window15-enrichment-audit
     paths:
-      - 'rh-window15-audit/**'
-      - '.github/workflows/rh-window15-second-enrichment.yml'
+      - '.github/workflows/rh-window15-minimal-threshold.yml'
 
 permissions:
   contents: read
