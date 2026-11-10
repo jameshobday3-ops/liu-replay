@@ -61,3 +61,5 @@ jobs:
             rh-window15-audit/spectral/even_source_shift_scan_receipt.json
             rh-window15-audit/spectral/sourceshift_scan_*_schur.json
             rh-window15-audit/spectral/sourceshift_scan_*_head_congruence.json
+
+# fixed-scan-rerun
