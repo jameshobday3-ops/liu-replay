@@ -1,0 +1,62 @@
+name: RH Window15 Parallel Gap Brackets
+
+on:
+  push:
+    branches:
+      - rh-window15-enrichment-audit
+    paths:
+      - '.github/workflows/rh-window15-parallel-gap.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  even-threshold:
+    strategy:
+      fail-fast: false
+      matrix:
+        threshold: ['5.25e-97','1e-92','1e-90']
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      PYTHONHASHSEED: "0"
+      OPENBLAS_NUM_THREADS: "2"
+      OMP_NUM_THREADS: "2"
+      MKL_NUM_THREADS: "2"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install pinned arithmetic stack
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install python-flint==0.8.0 mpmath==1.3.0 numpy==2.3.5 scipy==1.17.0
+      - name: Rebuild source prerequisites
+        working-directory: rh-window15-audit/spectral
+        run: |
+          python adaptive_source.py --L 3/2 --cells 16384 --iterations 600
+          mkdir -p inputs
+          cp source_weights_L3_2.json inputs/source_weights_L3_2.json
+          python build_moments.py
+          python budget.py
+          python build_sources.py
+      - name: Certify even threshold
+        working-directory: rh-window15-audit/spectral
+        run: python source_shift_single.py --parity even --threshold "${{ matrix.threshold }}" --precision 1024
+      - name: Preserve threshold receipt
+        if: always()
+        working-directory: rh-window15-audit/spectral
+        run: |
+          test -f single_threshold_receipt.json && cp single_threshold_receipt.json "single_threshold_${{ matrix.threshold }}.json" || true
+      - name: Upload receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: "window15-gap-${{ matrix.threshold }}"
+          retention-days: 30
+          path: |
+            rh-window15-audit/spectral/single_threshold_*.json
+            rh-window15-audit/spectral/sourceshift_single_*_schur.json
+            rh-window15-audit/spectral/sourceshift_single_*_head_congruence.json
