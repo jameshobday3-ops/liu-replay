@@ -41,13 +41,13 @@ def load_source(name,p):
             raise ValueError(f'bad source header: {header}')
         n=int(header['n']); A=arb_mat(n,n)
         for i in range(n):
-            line=f.readline();h.update(line.encode());row=json.loads(line);assert len(row)==864-i
+            line=f.readline();h.update(line.encode());row=json.loads(line)
             if len(row)!=n-i: raise ValueError((name,p,i,len(row),n-i))
             for j,value in enumerate(row,start=i):
                 v=arb(int(value))/(1<<512)+arb(0,arb(2)**-510);A[i,j]=A[j,i]=v
         if f.read(): raise ValueError('trailing source data')
     receipt=json.loads((OUT/'source_build_receipt.json').read_text())
-    assert h.hexdigest()==receipt['source_uncompressed_hashes'][path.name]
+    if h.hexdigest()!=receipt['source_uncompressed_hashes'][path.name]: raise ValueError('source hash mismatch')
     return A
 def dominance(A):
     positives=negatives=0;margin=None
