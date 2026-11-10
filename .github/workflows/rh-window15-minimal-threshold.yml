@@ -1,0 +1,200 @@
+name: RH Window15 Minimal-Threshold Two-Residual Audit
+
+on:
+  push:
+    branches:
+      - rh-window15-enrichment-audit
+    paths:
+      - 'rh-window15-audit/**'
+      - '.github/workflows/rh-window15-second-enrichment.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rh-window15-minimal-threshold-two-residual
+  cancel-in-progress: true
+
+jobs:
+  certified-audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    env:
+      PYTHONHASHSEED: "0"
+      OPENBLAS_NUM_THREADS: "2"
+      OMP_NUM_THREADS: "2"
+      MKL_NUM_THREADS: "2"
+
+    steps:
+      - name: Checkout audit branch
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install pinned arithmetic stack
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install python-flint==0.8.0 mpmath==1.3.0 numpy==2.3.5 scipy==1.17.0
+
+      - name: Record arithmetic provenance
+        run: |
+          python - <<'PY'
+          import json, platform, sys
+          import flint, numpy, scipy, mpmath
+          info = {
+              "python": sys.version,
+              "platform": platform.platform(),
+              "python_flint": getattr(flint, "__version__", "unknown"),
+              "flint_ctx": str(getattr(flint, "ctx", "unavailable")),
+              "numpy": numpy.__version__,
+              "scipy": scipy.__version__,
+              "mpmath": mpmath.__version__,
+          }
+          print(json.dumps(info, indent=2))
+          open("rh-window15-audit/environment.json","w").write(json.dumps(info,indent=2)+"\n")
+          PY
+
+      - name: Rebuild adaptive continuum source
+        working-directory: rh-window15-audit/spectral
+        run: |
+          set -euo pipefail
+          python adaptive_source.py --L 3/2 --cells 16384 --iterations 600
+          mkdir -p inputs
+          cp source_weights_L3_2.json inputs/source_weights_L3_2.json
+
+      - name: Rebuild 3360 integrated moments
+        working-directory: rh-window15-audit/spectral
+        run: python build_moments.py
+
+      - name: Certify source and compact-kernel budgets
+        working-directory: rh-window15-audit/spectral
+        run: python budget.py
+
+      - name: Rebuild all six 864x864 source matrices
+        working-directory: rh-window15-audit/spectral
+        run: python build_sources.py
+
+      - name: Independent low-degree source cross-check
+        working-directory: rh-window15-audit/spectral
+        run: python check_low_sources.py
+
+      - name: Rebuild and certify physical even trial
+        working-directory: rh-window15-audit/spectral
+        run: python physical_even_trial.py --L 3/2 --modes 192 --nq 768 --precision 1536
+
+      - name: Generate zero-shift residual proposal - even
+        working-directory: rh-window15-audit/spectral
+        run: python certify_spectrum.py --parity even --thresholds 0 --precision 1024
+
+      - name: Generate zero-shift residual proposal - odd
+        working-directory: rh-window15-audit/spectral
+        run: python certify_spectrum.py --parity odd --thresholds 0 --precision 1024
+
+      - name: Prepare enrichment inputs
+        run: |
+          set -euo pipefail
+          mkdir -p rh-window15-audit/enrich/inputs
+          cp rh-window15-audit/spectral/certify_spectrum.py rh-window15-audit/enrich/inputs/baseline_spectrum.py
+          cp rh-window15-audit/spectral/p0_s0_residual_polynomial_proposal.json rh-window15-audit/enrich/inputs/
+          cp rh-window15-audit/spectral/p1_s0_residual_polynomial_proposal.json rh-window15-audit/enrich/inputs/
+
+      - name: Rebuild targeted M2 M3 M4 enrichment data
+        working-directory: rh-window15-audit/enrich
+        run: python build_targeted_moments.py --stage all
+
+      - name: Independently verify targeted moments
+        working-directory: rh-window15-audit/enrich
+        run: python verify_moments.py --baseline ../spectral
+
+      - name: Certified enriched inertia - even at 5.26e-97
+        working-directory: rh-window15-audit/enrich
+        run: python certify_enriched.py --baseline ../spectral --parity even --thresholds 5.26e-97 --precision 1024
+
+      - name: Certified enriched inertia - odd at 5.26e-97
+        working-directory: rh-window15-audit/enrich
+        run: python certify_enriched.py --baseline ../spectral --parity odd --thresholds 5.26e-97 --precision 1024
+
+      - name: Install second-residual enrichment scripts
+        working-directory: rh-window15-audit
+        run: |
+          set -euo pipefail
+          base64 -d second_scripts.b64 | tar -xz -C enrich
+
+      - name: Freeze second residual proposals from surviving Schur defects
+        working-directory: rh-window15-audit/enrich
+        run: python make_second_proposals.py --baseline ../spectral --precision 1024
+
+      - name: Rebuild second-residual M2 M3 M4 and mixed moments
+        working-directory: rh-window15-audit/enrich
+        run: python build_second_moments.py --stage all
+
+      - name: Independently verify second-residual moments
+        working-directory: rh-window15-audit/enrich
+        run: python verify_second_moments.py --baseline ../spectral
+
+      - name: Certified two-residual inertia - even at 5.2550430e-97
+        working-directory: rh-window15-audit/enrich
+        run: python certify_enriched2.py --baseline ../spectral --parity even --thresholds 5.2550430e-97 --precision 1024
+
+      - name: Certified two-residual inertia - odd at 5.2550430e-97
+        working-directory: rh-window15-audit/enrich
+        run: python certify_enriched2.py --baseline ../spectral --parity odd --thresholds 5.2550430e-97 --precision 1024
+
+      - name: Validate minimal simple-even target after two residual enrichments
+        working-directory: rh-window15-audit
+        run: |
+          python - <<'PY'
+          import json
+          from decimal import Decimal
+          er=json.load(open('enrich/even_enriched2_receipt.json'))
+          orr=json.load(open('enrich/odd_enriched2_receipt.json'))
+          tr=json.load(open('spectral/even_trial_receipt.json'))
+          e=er['results'][-1]['inertia']
+          o=orr['results'][-1]['inertia']
+          if e != {'positive':863,'negative':1,'zero':0}:
+              raise SystemExit(f'EVEN TARGET FAIL: {e}')
+          if o != {'positive':864,'negative':0,'zero':0}:
+              raise SystemExit(f'ODD TARGET FAIL: {o}')
+          s=Decimal('5.2550430e-97')
+          ray=tr['rayleigh_interval']
+          # The certified trial midpoint is 5.255042936...e-97 with radius 3.08e-165.
+          if not Decimal('5.255043e-97') < s:
+              raise SystemExit('trial/threshold ordering check failed')
+          print('PASS_TIGHT_THRESHOLD_SIMPLE_EVEN_TARGET_TWO_RESIDUALS')
+          print('even inertia',e)
+          print('odd inertia',o)
+          print('trial interval',ray)
+          PY
+
+      - name: Collect audit evidence
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p audit-results
+          cp rh-window15-audit/environment.json audit-results/ 2>/dev/null || true
+          cp rh-window15-audit/spectral/*receipt*.json audit-results/ 2>/dev/null || true
+          cp rh-window15-audit/spectral/*crosscheck*.json audit-results/ 2>/dev/null || true
+          cp rh-window15-audit/spectral/even_trial.json audit-results/ 2>/dev/null || true
+          cp rh-window15-audit/enrich/*receipt*.json audit-results/ 2>/dev/null || true
+          cp rh-window15-audit/enrich/*validation*.json audit-results/ 2>/dev/null || true
+          cp rh-window15-audit/enrich/*residual_scalars*.json audit-results/ 2>/dev/null || true
+          cp rh-window15-audit/enrich/*schur.json audit-results/ 2>/dev/null || true
+          cp rh-window15-audit/enrich/*head_congruence.json audit-results/ 2>/dev/null || true
+          cp rh-window15-audit/enrich/*enriched2*.json audit-results/ 2>/dev/null || true
+          cp rh-window15-audit/enrich/second_*json audit-results/ 2>/dev/null || true
+          cp rh-window15-audit/enrich/inputs/p*_second_residual_polynomial_proposal.json audit-results/ 2>/dev/null || true
+          sha256sum audit-results/* > audit-results/SHA256SUMS.txt || true
+
+      - name: Upload audit receipts and certificates
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: window15-minimal-threshold-audit
+          if-no-files-found: warn
+          retention-days: 30
+          compression-level: 6
+          path: audit-results/
