@@ -49,7 +49,7 @@ jobs:
         run: python budget.py
       - name: Build 1024-mode-per-parity interval sources
         working-directory: rh-window15-audit/spectral
-        run: python build_sources_param.py --parity-modes 1024 --precision 4096
+        run: python build_sources_param.py --parity-modes 1024 --precision 8192
       - name: Rebuild physical even trial
         working-directory: rh-window15-audit/spectral
         run: python physical_even_trial.py
